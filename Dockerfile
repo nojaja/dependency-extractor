@@ -40,11 +40,11 @@ RUN npm ci --only=production
 COPY src/ ./src/
 
 # マウントポイントディレクトリの作成
-RUN mkdir -p /mnt/repo
+RUN mkdir -p /input
 
 # コンテナ実行時の設定
 ENTRYPOINT ["node", "src/index.js"]
-CMD ["/mnt/repo"]
+CMD ["/input"]
 
 # ラベル情報
 LABEL org.opencontainers.image.title="Dependency Extractor Tool" \

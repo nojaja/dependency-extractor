@@ -23,12 +23,12 @@ Gitリポジトリ内からJava（Maven/Gradle）、PHP（Composer）、Node.js�
 
 2. 抽出を実行する
    ```bash
-   docker run --rm -v /path/to/your/repo:/mnt/repo dependency-extractor
+   docker run --rm -v /path/to/your/repo:/input dependency-extractor
    ```
 
    または、出力ファイル名を指定する場合：
    ```bash
-   docker run --rm -v /path/to/your/repo:/mnt/repo -v $(pwd):/output dependency-extractor /mnt/repo -o /output/result.csv
+   docker run --rm -v /path/to/your/repo:/input -v $(pwd):/output dependency-extractor /input -o /output/result.csv
    ```
 
 ### 直接実行する場合
