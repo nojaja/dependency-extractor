@@ -1,0 +1,11 @@
+ProjectType,ProjectPath,DependencyName,DependencyVersion
+COMPOSER,composer-project\composer.json,monolog/monolog,^2.0
+COMPOSER,composer-project\composer.json,symfony/console,^5.0
+COMPOSER,composer-project\composer.json,phpunit/phpunit,^9.0
+GRADLE,gradle-project\build.gradle,com.google.guava:guava,31.1-jre
+GRADLE,gradle-project\build.gradle,org.junit.jupiter:junit-jupiter,5.9.1
+MAVEN,maven-project\pom.xml,org.apache.commons:commons-lang3,3.12.0
+MAVEN,maven-project\pom.xml,junit:junit,4.13.2
+NPM,npm-project\package.json,lodash,^4.17.21
+NPM,npm-project\package.json,express,^4.18.2
+NPM,npm-project\package.json,jest,^29.0.0

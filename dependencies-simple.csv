@@ -1,0 +1,3 @@
+ProjectType,ProjectPath,DependencyName,DependencyVersion
+NPM,package.json,lodash,^4.17.21
+NPM,package.json,express,^4.18.2
