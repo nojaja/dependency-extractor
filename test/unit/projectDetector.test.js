@@ -262,6 +262,110 @@ describe('ProjectDetector', () => {
         });
     });
 
+    describe('detectProjectsStreaming method', () => {
+        test('should call callback for each detected project', async () => {
+            // Setup: Mock the walk method to simulate finding two files
+            mockWalk.mockImplementation(async (repoPath, settings, fileCallback, errorCallback) => {
+                // Simulate finding package.json files
+                await fileCallback('module1/package.json', settings);
+                await fileCallback('module2/package.json', settings);
+                return 2; // Return number of files processed
+            });
+
+            const detector = new ProjectDetector(false);
+            const mockCallback = jest.fn();
+
+            // Execute
+            const result = await detector.detectProjectsStreaming(mockProjectPath, mockCallback);
+
+            // Verify
+            expect(result).toBe(2); // Should return number of projects detected
+            expect(mockCallback).toHaveBeenCalledTimes(2);
+            
+            // Check first callback call
+            expect(mockCallback).toHaveBeenNthCalledWith(1, {
+                type: ProjectType.NPM,
+                path: path.dirname(path.join(mockProjectPath, 'module1/package.json')),
+                file: 'package.json',
+                relativePath: 'module1/package.json'
+            });
+
+            // Check second callback call
+            expect(mockCallback).toHaveBeenNthCalledWith(2, {
+                type: ProjectType.NPM,
+                path: path.dirname(path.join(mockProjectPath, 'module2/package.json')),
+                file: 'package.json',
+                relativePath: 'module2/package.json'
+            });
+        });
+
+        test('should handle callback errors gracefully', async () => {
+            // Setup: Mock the walk method to simulate finding one file
+            mockWalk.mockImplementation(async (repoPath, settings, fileCallback, errorCallback) => {
+                await fileCallback('package.json', settings);
+                return 1;
+            });
+
+            const detector = new ProjectDetector(false);
+            const mockCallback = jest.fn().mockRejectedValue(new Error('Callback error'));
+
+            // Execute
+            const result = await detector.detectProjectsStreaming(mockProjectPath, mockCallback);
+
+            // Verify: Should still return count even if callback fails
+            expect(result).toBe(1);
+            expect(mockCallback).toHaveBeenCalledTimes(1);
+            expect(mockLoggerError).toHaveBeenCalledWith(
+                expect.stringContaining('プロジェクト処理中にエラーが発生しました')
+            );
+        });
+
+        test('should not count non-project files', async () => {
+            // Setup: Mock the walk method to simulate finding non-project files
+            mockWalk.mockImplementation(async (repoPath, settings, fileCallback, errorCallback) => {
+                await fileCallback('README.md', settings);
+                await fileCallback('src/index.js', settings);
+                return 2;
+            });
+
+            const detector = new ProjectDetector(false);
+            const mockCallback = jest.fn();
+
+            // Execute
+            const result = await detector.detectProjectsStreaming(mockProjectPath, mockCallback);
+
+            // Verify: Should not call callback for non-project files
+            expect(result).toBe(0);
+            expect(mockCallback).not.toHaveBeenCalled();
+        });
+
+        test('should process mixed project types in streaming mode', async () => {
+            // Setup: Mock the walk method to simulate finding different project files
+            mockWalk.mockImplementation(async (repoPath, settings, fileCallback, errorCallback) => {
+                await fileCallback('package.json', settings);
+                await fileCallback('pom.xml', settings);
+                await fileCallback('composer.json', settings);
+                return 3;
+            });
+
+            const detector = new ProjectDetector(false);
+            const mockCallback = jest.fn();
+
+            // Execute
+            const result = await detector.detectProjectsStreaming(mockProjectPath, mockCallback);
+
+            // Verify
+            expect(result).toBe(3);
+            expect(mockCallback).toHaveBeenCalledTimes(3);
+            
+            // Check that different project types were detected
+            const callArguments = mockCallback.mock.calls.map(call => call[0]);
+            expect(callArguments.some(arg => arg.type === ProjectType.NPM)).toBe(true);
+            expect(callArguments.some(arg => arg.type === ProjectType.MAVEN)).toBe(true);
+            expect(callArguments.some(arg => arg.type === ProjectType.COMPOSER)).toBe(true);
+        });
+    });
+
     describe('exports', () => {
         test('should export ProjectType constants', () => {
             expect(ProjectType.NPM).toBe('NPM');

@@ -60,21 +60,14 @@ class DependencyExtractorApp {
       // リポジトリが存在するか確認
       if (!existsSync(repoPath)) {
         throw new Error(`指定されたパス '${repoPath}' は存在しません。`);
-      }
+      }      // ストリーミング処理用のCSV初期化
+      await this.csvHelper.initializeCsv();
+      let totalDependencies = 0;
+      let totalProjects = 0;
 
-      // プロジェクトの検出
-      const projects = await this.projectDetector.detectProjects(repoPath);
-      logger.info(`${projects.length} 個のプロジェクトが検出されました。`);
-
-      if (projects.length === 0) {
-        logger.warn('対象のプロジェクトが見つかりませんでした。');
-        return;
-      }
-
-      // 各プロジェクトから依存関係を抽出
-      const allDependencies = [];
-
-      for (const project of projects) {
+      // プロジェクト処理用のコールバック関数
+      const projectCallback = async (project) => {
+        totalProjects++;
         try {
           let dependencies = [];
 
@@ -105,29 +98,43 @@ class DependencyExtractorApp {
               break;
             default:
               logger.warn(`未対応のプロジェクトタイプ: ${project.type}`);
-              continue;
+              return;
           }
 
           if (dependencies.length > 0) {
-            allDependencies.push(...dependencies);
-            logger.info(`${project.type} プロジェクト '${project.relativePath}' から ${dependencies.length} 個の依存関係を抽出しました。`);
+            // 即座にCSVに書き込み、メモリから解放
+            await this.csvHelper.appendDependenciesToCsv(dependencies);
+            totalDependencies += dependencies.length;
+            logger.info(`${project.type} プロジェクト '${project.relativePath}' から ${dependencies.length} 個の依存関係を処理しました。`);
           } else {
             logger.warn(`${project.type} プロジェクト '${project.relativePath}' から依存関係を抽出できませんでした。`);
           }
+          
+          // メモリから即座に解放
+          dependencies = null;
         } catch (error) {
           logger.error(`プロジェクト '${project.relativePath}' の依存関係抽出中にエラーが発生しました: ${error.message}`);
           if (this.options.debug) {
             logger.debug(error.stack);
           }
           // 個別のプロジェクトのエラーで全体の処理は止めない
-          continue;
         }
-      }
+      };
 
-      // CSV出力
-      if (allDependencies.length > 0) {
-        const csvPath = await this.csvHelper.writeDependenciesToCsv(allDependencies);
-        logger.info(`依存関係情報を ${csvPath} に出力しました。合計 ${allDependencies.length} 件の依存関係が抽出されました。`);
+      // ストリーミング処理でプロジェクトを検出・処理
+      const detectedProjects = await this.projectDetector.detectProjectsStreaming(repoPath, projectCallback);
+      
+      if (detectedProjects === 0) {
+        logger.warn('対象のプロジェクトが見つかりませんでした。');
+        return;
+      }
+      
+      logger.info(`${detectedProjects} 個のプロジェクトをストリーミング処理しました。`);
+
+      // CSV出力完了
+      if (totalDependencies > 0) {
+        const csvPath = await this.csvHelper.finalizeCsv();
+        logger.info(`依存関係情報を ${csvPath} に出力しました。合計 ${totalDependencies} 件の依存関係が抽出されました。`);
       } else {
         logger.warn('抽出された依存関係がありませんでした。');
       }

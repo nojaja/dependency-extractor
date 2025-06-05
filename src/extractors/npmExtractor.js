@@ -126,12 +126,13 @@ export class NpmExtractor {
   /**
    * package-lock.json (v2) から依存関係を処理する
    * @private
-   */  async _processPackageLockDependencies(dependencies, result, projectRelativePath) {
+   */
+   async _processPackageLockDependencies(dependencies, result, projectRelativePath) {
     const projectPathForCsv = path.join(
       path.dirname(projectRelativePath), 
       'package-lock.json'
     );
-      for (const [name, info] of Object.entries(dependencies)) {
+    for (const [name, info] of Object.entries(dependencies)) {
       result.push({
         projectType: 'NPM',
         projectPath: projectPathForCsv,
@@ -140,7 +141,7 @@ export class NpmExtractor {
         isDev: !!info.dev
       });
       
-      // 再帰的に依存関係を処理
+        // 再帰的に依存関係を処理
       if (info.dependencies) {
         await this._processPackageLockDependencies(
           info.dependencies, 
