@@ -56,50 +56,50 @@ class DependencyExtractorApp {
     try {
       logger.info('依存関係抽出ツールを開始します...');
       logger.info(`対象リポジトリ: ${repoPath}`);
-      
+
       // リポジトリが存在するか確認
       if (!existsSync(repoPath)) {
         throw new Error(`指定されたパス '${repoPath}' は存在しません。`);
       }
-      
+
       // プロジェクトの検出
       const projects = await this.projectDetector.detectProjects(repoPath);
       logger.info(`${projects.length} 個のプロジェクトが検出されました。`);
-      
+
       if (projects.length === 0) {
         logger.warn('対象のプロジェクトが見つかりませんでした。');
         return;
       }
-      
+
       // 各プロジェクトから依存関係を抽出
       const allDependencies = [];
-      
+
       for (const project of projects) {
         try {
           let dependencies = [];
-          
+
           switch (project.type) {
             case ProjectType.NPM:
               dependencies = await this.npmExtractor.extractDependencies(
-                project.path, 
+                project.path,
                 project.relativePath
               );
               break;
             case ProjectType.MAVEN:
               dependencies = await this.mavenExtractor.extractDependencies(
-                project.path, 
+                project.path,
                 project.relativePath
               );
               break;
             case ProjectType.GRADLE:
               dependencies = await this.gradleExtractor.extractDependencies(
-                project.path, 
+                project.path,
                 project.relativePath
               );
               break;
             case ProjectType.COMPOSER:
               dependencies = await this.composerExtractor.extractDependencies(
-                project.path, 
+                project.path,
                 project.relativePath
               );
               break;
@@ -107,7 +107,7 @@ class DependencyExtractorApp {
               logger.warn(`未対応のプロジェクトタイプ: ${project.type}`);
               continue;
           }
-          
+
           if (dependencies.length > 0) {
             allDependencies.push(...dependencies);
             logger.info(`${project.type} プロジェクト '${project.relativePath}' から ${dependencies.length} 個の依存関係を抽出しました。`);
@@ -123,7 +123,7 @@ class DependencyExtractorApp {
           continue;
         }
       }
-      
+
       // CSV出力
       if (allDependencies.length > 0) {
         const csvPath = await this.csvHelper.writeDependenciesToCsv(allDependencies);
@@ -131,7 +131,7 @@ class DependencyExtractorApp {
       } else {
         logger.warn('抽出された依存関係がありませんでした。');
       }
-      
+
       logger.info('処理が完了しました。');
     } catch (error) {
       logger.error(`処理中にエラーが発生しました: ${error.message}`);
@@ -147,20 +147,36 @@ class DependencyExtractorApp {
  * コマンドライン引数の解析と実行
  */
 async function main() {
-  try {
-    // コマンドライン引数の解析
+  const startTime = process.hrtime();
+  process.on('exit', exitCode => {
+    //後始末処理
+    const endTimeArray = process.hrtime(startTime);
+    const memoryUsage = process.memoryUsage();
+    function toMByte(byte) {
+      return `${Math.floor((byte / 1024 / 1024) * 100) / 100}MB`
+    }
+    const _memoryUsage = JSON.stringify({
+      "rss": toMByte(memoryUsage.rss),
+      "heapTotal": toMByte(memoryUsage.heapTotal),
+      "heapUsed": toMByte(memoryUsage.heapUsed),
+      "external": toMByte(memoryUsage.external),
+      "arrayBuffers": toMByte(memoryUsage.arrayBuffers)
+    });
+    console.log(`process statistics - Execution time: ${endTimeArray[0]}s ${endTimeArray[1] / 1000000}ms, memoryUsage: ${_memoryUsage}`);
+  });
+  try {    // コマンドライン引数の解析
     const program = new Command();
     program
       .name('dependency-extractor')
       .description('Gitリポジトリ内からJava、PHP、Node.jsのプロジェクトを検出し、依存関係ライブラリを抽出するツール')
       .version('0.1.0')
-      .argument('<repositoryPath>', 'スキャン対象のGitリポジトリパス')
+      .requiredOption('-i, --input <path>', 'スキャン対象のGitリポジトリパス')
       .option('-o, --output <path>', '出力CSVファイルのパス', 'dependencies.csv')
       .option('-d, --debug', 'デバッグモード', false)
       .parse(process.argv);
 
     const options = program.opts();
-    const [repoPath] = program.args;
+    const repoPath = options.input;
 
     // アプリケーションの実行
     const app = new DependencyExtractorApp({
@@ -175,10 +191,8 @@ async function main() {
   }
 }
 
-// コマンドラインから実行された場合のみmain関数を実行
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
-}
+// CLIツールとして実行
+main();
 
 // テストなどからインポート可能にするためにエクスポート
 export { DependencyExtractorApp };

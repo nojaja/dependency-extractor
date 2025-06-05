@@ -18,13 +18,29 @@ console.log('------------------------------------');
 
 // コマンドライン引数の解析
 const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error('使用方法: node index-simple.js <リポジトリパス>');
-  process.exit(1);
+
+// オプション解析
+let repoPath = null;
+let debug = false;
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '-i' || args[i] === '--input') {
+    if (i + 1 < args.length) {
+      repoPath = args[i + 1];
+      i++; // 次の引数をスキップ
+    } else {
+      console.error('エラー: -i オプションにはパスを指定してください。');
+      process.exit(1);
+    }
+  } else if (args[i] === '--debug') {
+    debug = true;
+  }
 }
 
-const repoPath = args[0];
-const debug = args.includes('--debug');
+if (!repoPath) {
+  console.error('使用方法: node index-simple.js -i <リポジトリパス> [--debug]');
+  process.exit(1);
+}
 
 // リポジトリパスの検証
 if (!fs.existsSync(repoPath)) {
