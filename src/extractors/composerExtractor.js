@@ -1,11 +1,10 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import { promisify } from 'util';
 import log4js from 'log4js';
 
-const execPromise = promisify(exec);
 const logger = log4js.getLogger('composerExtractor');
 
 /**
@@ -35,12 +34,31 @@ export class ComposerExtractor {
       const composerJsonPath = path.join(projectPath, 'composer.json');
       
       if (!existsSync(composerJsonPath)) {
-        logger.error(`composer.jsonファイルが見つかりません: ${projectPath}`);
+        logger.warn('composer.jsonが見つかりません');
         return [];
       }
-      
       // composer.lockのパス
       const composerLockPath = path.join(projectPath, 'composer.lock');
+      // composer show --format=json をstreamで実行
+      await new Promise((resolve, reject) => {
+        const proc = spawn('composer', ['show', '--format=json'], { cwd: projectPath, shell: true });
+        proc.stdout.on('data', (data) => {
+          logger.info(`composer標準出力: ${data.toString()}`);
+        });
+        proc.stderr.on('data', (data) => {
+          logger.warn(`composer標準エラー: ${data.toString()}`);
+        });
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`composerコマンドが異常終了しました (exit code: ${code})`));
+          }
+        });
+        proc.on('error', (err) => {
+          reject(err);
+        });
+      });
       
       // プロジェクトパスをCSV用に整形
       const projectPathForCsv = path.join(
@@ -48,21 +66,35 @@ export class ComposerExtractor {
         'composer.json'
       );
       
+      // JSON出力をパース
+      const showData = JSON.parse(stdout);
+        if (showData.installed && Array.isArray(showData.installed)) {
+        for (const pkg of showData.installed) {
+          dependencies.push({
+            projectType: 'COMPOSER',
+            projectPath: projectPathForCsv,
+            dependencyName: pkg.name,
+            dependencyVersion: pkg.version || 'unknown',
+            isDev: false
+          });
+        }
+        
+        logger.info(`composer showから${dependencies.length}の依存関係を抽出しました`);
+        return dependencies;
+      }
+      
+    } catch (execError) {
+      logger.error(`composer showコマンド実行エラー: ${execError.message}`);
+      logger.warn('composer.jsonおよびcomposer.lockから依存関係を抽出します');
+    }
+      // composer.lockからの抽出を試みる
+    if (existsSync(composerLockPath)) {
       try {
-        // 'composer show' コマンドで依存関係を取得
-        logger.info(`composer show コマンドを実行中: ${projectPath}`);
+        const lockContent = await readFile(composerLockPath, 'utf8');
+        const lockData = JSON.parse(lockContent);
         
-        const { stdout } = await execPromise(
-          'composer show --all --format=json',
-          { cwd: projectPath }
-        );
-        
-        if (this.debug) logger.debug(`composer show 実行成功`);
-        
-        // JSON出力をパース
-        const showData = JSON.parse(stdout);
-          if (showData.installed && Array.isArray(showData.installed)) {
-          for (const pkg of showData.installed) {
+        if (lockData.packages && Array.isArray(lockData.packages)) {
+          for (const pkg of lockData.packages) {
             dependencies.push({
               projectType: 'COMPOSER',
               projectPath: projectPathForCsv,
@@ -71,86 +103,60 @@ export class ComposerExtractor {
               isDev: false
             });
           }
-          
-          logger.info(`composer showから${dependencies.length}の依存関係を抽出しました`);
+        }
+        
+        if (dependencies.length > 0) {
+          logger.info(`composer.lockから${dependencies.length}の依存関係を抽出しました`);
           return dependencies;
         }
-        
-      } catch (execError) {
-        logger.error(`composer showコマンド実行エラー: ${execError.message}`);
-        logger.warn('composer.jsonおよびcomposer.lockから依存関係を抽出します');
+      } catch (lockError) {
+        logger.error(`composer.lock解析エラー: ${lockError.message}`);
       }
-        // composer.lockからの抽出を試みる
-      if (existsSync(composerLockPath)) {
-        try {
-          const lockContent = await readFile(composerLockPath, 'utf8');
-          const lockData = JSON.parse(lockContent);
-          
-          if (lockData.packages && Array.isArray(lockData.packages)) {
-            for (const pkg of lockData.packages) {
-              dependencies.push({
-                projectType: 'COMPOSER',
-                projectPath: projectPathForCsv,
-                dependencyName: pkg.name,
-                dependencyVersion: pkg.version || 'unknown',
-                isDev: false
-              });
-            }
-          }
-          
-          if (dependencies.length > 0) {
-            logger.info(`composer.lockから${dependencies.length}の依存関係を抽出しました`);
-            return dependencies;
-          }
-        } catch (lockError) {
-          logger.error(`composer.lock解析エラー: ${lockError.message}`);
-        }
-      }
-        // composer.jsonからの抽出を試みる
-      try {
-        const jsonContent = await readFile(composerJsonPath, 'utf8');
-        const composerData = JSON.parse(jsonContent);
-        
-        // 通常の依存関係
-        if (composerData.require) {
-          for (const [name, version] of Object.entries(composerData.require)) {
-            // PHPバージョン依存は除外
-            if (name !== 'php') {
-              dependencies.push({
-                projectType: 'COMPOSER',
-                projectPath: projectPathForCsv,
-                dependencyName: name,
-                dependencyVersion: version,
-                isDev: false
-              });
-            }
-          }
-        }
-        
-        // 開発依存関係
-        if (composerData['require-dev']) {
-          for (const [name, version] of Object.entries(composerData['require-dev'])) {
+    }
+      // composer.jsonからの抽出を試みる
+    try {
+      const jsonContent = await readFile(composerJsonPath, 'utf8');
+      const composerData = JSON.parse(jsonContent);
+      
+      // 通常の依存関係
+      if (composerData.require) {
+        for (const [name, version] of Object.entries(composerData.require)) {
+          // PHPバージョン依存は除外
+          if (name !== 'php') {
             dependencies.push({
               projectType: 'COMPOSER',
               projectPath: projectPathForCsv,
               dependencyName: name,
               dependencyVersion: version,
-              isDev: true
+              isDev: false
             });
           }
         }
-        
-      } catch (jsonError) {
-        logger.error(`composer.json解析エラー: ${jsonError.message}`);
       }
       
-      logger.info(`Composerプロジェクトから${dependencies.length}の依存関係を抽出しました`);
-      return dependencies;
+      // 開発依存関係
+      if (composerData['require-dev']) {
+        for (const [name, version] of Object.entries(composerData['require-dev'])) {
+          dependencies.push({
+            projectType: 'COMPOSER',
+            projectPath: projectPathForCsv,
+            dependencyName: name,
+            dependencyVersion: version,
+            isDev: true
+          });
+        }
+      }
       
-    } catch (error) {
-      logger.error(`Composer依存関係抽出エラー: ${error.message}`);
-      return [];
+    } catch (jsonError) {
+      logger.error(`composer.json解析エラー: ${jsonError.message}`);
     }
+    
+    logger.info(`Composerプロジェクトから${dependencies.length}の依存関係を抽出しました`);
+    return dependencies;
+    
+  } catch (error) {
+    logger.error(`Composer依存関係抽出エラー: ${error.message}`);
+    return [];
   }
 }
 

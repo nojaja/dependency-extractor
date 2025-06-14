@@ -50,10 +50,28 @@ export class MavenExtractor {
         // mvn help:effective-pomコマンドを実行
         logger.info(`effective-pomを生成中: ${projectPath}`);
         try {
-          await execPromise(
-            `mvn help:effective-pom -Doutput="${effectivePomPath}"`,
-            { cwd: projectPath }
-          );
+          // streamで標準出力・標準エラーをloggerに出力
+          const { spawn } = await import('child_process');
+          const mvnProc = spawn('mvn', ['help:effective-pom', `-Doutput=${effectivePomPath}`], { cwd: projectPath, shell: true });
+
+          await new Promise((resolve, reject) => {
+            mvnProc.stdout.on('data', (data) => {
+              logger.info(`mvn標準出力: ${data.toString()}`);
+            });
+            mvnProc.stderr.on('data', (data) => {
+              logger.warn(`mvn標準エラー: ${data.toString()}`);
+            });
+            mvnProc.on('close', (code) => {
+              if (code === 0) {
+                resolve();
+              } else {
+                reject(new Error(`mvnコマンドが異常終了しました (exit code: ${code})`));
+              }
+            });
+            mvnProc.on('error', (err) => {
+              reject(err);
+            });
+          });
           
           if (this.debug) logger.debug(`effective-pom生成成功: ${effectivePomPath}`);
             // effective-pomを読み込む

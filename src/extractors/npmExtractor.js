@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import * as path from 'path';
 import log4js from 'log4js';
+import { spawn } from 'child_process';
 
 const logger = log4js.getLogger('npmExtractor');
 
@@ -26,26 +27,36 @@ export class NpmExtractor {
   async extractDependencies(projectPath, projectRelativePath) {
     logger.info(`NPM依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
-
     try {
       // package.jsonのパス
       const packageJsonPath = path.join(projectPath, 'package.json');
-      
-      // package-lock.jsonのパス
-      const lockFilePath = path.join(projectPath, 'package-lock.json');
-      
-      // yarnのlockファイルパス
-      const yarnLockPath = path.join(projectPath, 'yarn.lock');
-      
-      let packageData;
-      
-      try {        // package.jsonを読み込み
-        const packageContent = await readFile(packageJsonPath, 'utf8');
-        packageData = JSON.parse(packageContent);
-      } catch (error) {
-        logger.error(`package.jsonの読み込みエラー: ${error.message}`);
+      if (!existsSync(packageJsonPath)) {
+        logger.warn('package.jsonが見つかりません');
         return [];
       }
+      // npm ls --all --json をstreamで実行
+      await new Promise((resolve, reject) => {
+        const proc = spawn('npm', ['ls', '--all', '--json'], { cwd: projectPath, shell: true });
+        proc.stdout.on('data', (data) => {
+          logger.info(`npm標準出力: ${data.toString()}`);
+        });
+        proc.stderr.on('data', (data) => {
+          logger.warn(`npm標準エラー: ${data.toString()}`);
+        });
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`npmコマンドが異常終了しました (exit code: ${code})`));
+          }
+        });
+        proc.on('error', (err) => {
+          reject(err);
+        });
+      });
+      // package.jsonを読み込み
+      const packageContent = await readFile(packageJsonPath, 'utf8');
+      const packageData = JSON.parse(packageContent);
       
       // package-lock.jsonが存在する場合、それから依存関係を取得
       if (existsSync(lockFilePath)) {

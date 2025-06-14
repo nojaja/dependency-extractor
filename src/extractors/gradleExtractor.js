@@ -1,11 +1,10 @@
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import { promisify } from 'util';
 import log4js from 'log4js';
 
-const execPromise = promisify(exec);
 const logger = log4js.getLogger('gradleExtractor');
 
 /**
@@ -29,8 +28,28 @@ export class GradleExtractor {
   async extractDependencies(projectPath, projectRelativePath) {
     logger.info(`Gradle依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
-    
     try {
+      // gradle dependencies コマンドをstreamで実行
+      await new Promise((resolve, reject) => {
+        const proc = spawn('gradle', ['dependencies', '--console=plain'], { cwd: projectPath, shell: true });
+        proc.stdout.on('data', (data) => {
+          logger.info(`gradle標準出力: ${data.toString()}`);
+        });
+        proc.stderr.on('data', (data) => {
+          logger.warn(`gradle標準エラー: ${data.toString()}`);
+        });
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`gradleコマンドが異常終了しました (exit code: ${code})`));
+          }
+        });
+        proc.on('error', (err) => {
+          reject(err);
+        });
+      });
+      
       // build.gradle または build.gradle.kts のパスを確認
       let gradleFile = 'build.gradle';
       if (!existsSync(path.join(projectPath, gradleFile))) {
@@ -47,59 +66,17 @@ export class GradleExtractor {
         gradleFile
       );
       
-      try {
-        // 'gradle dependencies' コマンドを実行
-        logger.info(`gradle dependenciesコマンドを実行中: ${projectPath}`);
-        
-        const { stdout } = await execPromise(
-          'gradle dependencies --configuration compileClasspath',
-          { cwd: projectPath }
-        );
-        
-        if (this.debug) logger.debug(`gradle dependencies 実行出力:\n${stdout}`);
-        
-        // 出力を解析して依存関係を抽出
-        const depLines = this._parseGradleDependenciesOutput(stdout);
-          for (const dep of depLines) {
-          dependencies.push({
-            projectType: 'GRADLE',
-            projectPath: projectPathForCsv,
-            dependencyName: `${dep.group}:${dep.name}`,
-            dependencyVersion: dep.version || 'unknown',
-            isDev: dep.configuration === 'testCompileClasspath' || dep.configuration === 'testImplementation'
-          });
-        }
-        
-      } catch (execError) {
-        logger.error(`gradleコマンド実行エラー: ${execError.message}`);
-        
-        // コマンド実行エラー時はbuild.gradleファイルから直接抽出を試みる
-        logger.info(`build.gradleファイルから直接解析を試みます: ${projectPath}`);
-          try {
-          const gradleContent = await readFile(
-            path.join(projectPath, gradleFile), 
-            'utf8'
-          );
-          
-          // シンプルな正規表現ベースの解析
-          const depList = this._parseGradleFile(gradleContent);
-            for (const dep of depList) {
-            dependencies.push({
-              projectType: 'GRADLE',
-              projectPath: projectPathForCsv,
-              dependencyName: dep.name,
-              dependencyVersion: dep.version || 'unknown',
-              isDev: dep.type === 'testImplementation' || dep.type === 'testCompile'
-            });
-          }
-          
-        } catch (fileError) {
-          logger.error(`Gradleファイル読み込みエラー: ${fileError.message}`);
-        }
+      // 出力を解析して依存関係を抽出
+      const depLines = this._parseGradleDependenciesOutput(stdout);
+        for (const dep of depLines) {
+        dependencies.push({
+          projectType: 'GRADLE',
+          projectPath: projectPathForCsv,
+          dependencyName: `${dep.group}:${dep.name}`,
+          dependencyVersion: dep.version || 'unknown',
+          isDev: dep.configuration === 'testCompileClasspath' || dep.configuration === 'testImplementation'
+        });
       }
-      
-      logger.info(`Gradleプロジェクトから${dependencies.length}の依存関係を抽出しました`);
-      return dependencies;
       
     } catch (error) {
       logger.error(`Gradle依存関係抽出エラー: ${error.message}`);

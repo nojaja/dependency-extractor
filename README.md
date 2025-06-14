@@ -28,7 +28,7 @@ Gitリポジトリ内からJava（Maven/Gradle）、PHP（Composer）、Node.js�
 
    または、出力ファイル名を指定する場合：
    ```bash
-   docker run --rm -v /path/to/your/repo:/input -v $(pwd):/output dependency-extractor /input -o /output/result.csv
+   docker run --rm -v /path/to/your/repo:/input -v $(pwd):/output dependency-extractor -i /input -o /output/result.csv
    ```
 
 ### 直接実行する場合
