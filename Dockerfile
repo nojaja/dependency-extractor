@@ -14,8 +14,12 @@ FROM composer:2 AS php_builder
 # Stage 3: Final image based on Node.js
 FROM node:18-alpine
 
-# 必要なツールをインストール
-RUN apk add --no-cache openjdk11 php git 
+# PHPパッケージ管理機能のphar拡張を有効化
+
+RUN apk add --no-cache openjdk11 php git php8-phar\
+    && mkdir -p /usr/local/etc/php/conf.d/ \
+    && echo "extension=phar.so" > /usr/local/etc/php/conf.d/phar.ini \
+    && echo "phar.readonly = Off" > /usr/local/etc/php/conf.d/phar.ini
 
 # Javaツール（Maven, Gradle）のコピー
 COPY --from=java_builder /usr/share/maven /usr/share/maven
