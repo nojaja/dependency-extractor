@@ -28,24 +28,32 @@ export class GradleExtractor {
   async extractDependencies(projectPath, projectRelativePath) {
     logger.info(`Gradle依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
+    let stdout = '';
+    let stderr = '';
     try {
       // gradle dependencies コマンドをstreamで実行
       await new Promise((resolve, reject) => {
         const proc = spawn('gradle', ['dependencies', '--console=plain'], { cwd: projectPath, shell: true });
         proc.stdout.on('data', (data) => {
-          logger.info(`gradle標準出力: ${data.toString()}`);
+          const text = data.toString();
+          stdout += text;
+          logger.info(`gradle標準出力: ${text}`);
         });
         proc.stderr.on('data', (data) => {
           logger.warn(`gradle標準エラー: ${data.toString()}`);
+          stderr += data.toString();
         });
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
           } else {
-            reject(new Error(`gradleコマンドが異常終了しました (exit code: ${code})`));
+            const err = new Error(`gradleコマンドが異常終了しました (exit code: ${code})`);
+            err.stderr = stderr;
+            reject(err);
           }
         });
         proc.on('error', (err) => {
+          err.stderr = stderr;
           reject(err);
         });
       });
@@ -78,10 +86,28 @@ export class GradleExtractor {
         });
       }
       
+      return dependencies;
     } catch (error) {
       logger.error(`Gradle依存関係抽出エラー: ${error.message}`);
+      if (error.stderr) {
+        logger.error(`gradleコマンド標準エラー出力: ${error.stderr}`);
+      }
       return [];
     }
+  }
+
+  /**
+   * Gradle プロジェクトから依存関係を抽出する（タイムアウト付き）
+   * @param {string} projectPath
+   * @param {string} projectRelativePath
+   * @param {number} timeoutMs タイムアウト（ミリ秒）デフォルト60000ms
+   * @returns {Promise<Array<Object>>}
+   */
+  async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
+    return Promise.race([
+      this.extractDependencies(projectPath, projectRelativePath),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('GradleExtractor: タイムアウト（60秒）')), timeoutMs))
+    ]);
   }
 
   /**

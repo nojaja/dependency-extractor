@@ -52,6 +52,7 @@ export class MavenExtractor {
         try {
           // streamで標準出力・標準エラーをloggerに出力
           const { spawn } = await import('child_process');
+          let stderr = '';
           const mvnProc = spawn('mvn', ['help:effective-pom', `-Doutput=${effectivePomPath}`], { cwd: projectPath, shell: true });
 
           await new Promise((resolve, reject) => {
@@ -60,15 +61,19 @@ export class MavenExtractor {
             });
             mvnProc.stderr.on('data', (data) => {
               logger.warn(`mvn標準エラー: ${data.toString()}`);
+              stderr += data.toString();
             });
             mvnProc.on('close', (code) => {
               if (code === 0) {
                 resolve();
               } else {
-                reject(new Error(`mvnコマンドが異常終了しました (exit code: ${code})`));
+                const err = new Error(`mvnコマンドが異常終了しました (exit code: ${code})`);
+                err.stderr = stderr;
+                reject(err);
               }
             });
             mvnProc.on('error', (err) => {
+              err.stderr = stderr;
               reject(err);
             });
           });
@@ -110,6 +115,9 @@ export class MavenExtractor {
           
         } catch (execError) {
           logger.error(`mvnコマンド実行エラー: ${execError.message}`);
+          if (execError.stderr) {
+            logger.error(`mvnコマンド標準エラー出力: ${execError.stderr}`);
+          }
           logger.warn('Maven実行エラー。基本的なpom.xmlのみから依存関係を抽出します');
           
           // effective-pom生成に失敗した場合は、通常のpom.xmlから依存関係を抽出
@@ -145,6 +153,20 @@ export class MavenExtractor {
       logger.error(`Maven依存関係抽出エラー: ${error.message}`);
       return [];
     }
+  }
+
+  /**
+   * Maven プロジェクトから依存関係を抽出する（タイムアウト付き）
+   * @param {string} projectPath
+   * @param {string} projectRelativePath
+   * @param {number} timeoutMs タイムアウト（ミリ秒）デフォルト60000ms
+   * @returns {Promise<Array<Object>>}
+   */
+  async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
+    return Promise.race([
+      this.extractDependencies(projectPath, projectRelativePath),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('MavenExtractor: タイムアウト（60秒）')), timeoutMs))
+    ]);
   }
 }
 

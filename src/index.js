@@ -73,27 +73,31 @@ class DependencyExtractorApp {
 
           switch (project.type) {
             case ProjectType.NPM:
-              dependencies = await this.npmExtractor.extractDependencies(
+              dependencies = await this.npmExtractor.extractDependenciesWithTimeout(
                 project.path,
-                project.relativePath
+                project.relativePath,
+                60000
               );
               break;
             case ProjectType.MAVEN:
-              dependencies = await this.mavenExtractor.extractDependencies(
+              dependencies = await this.mavenExtractor.extractDependenciesWithTimeout(
                 project.path,
-                project.relativePath
+                project.relativePath,
+                60000
               );
               break;
             case ProjectType.GRADLE:
-              dependencies = await this.gradleExtractor.extractDependencies(
+              dependencies = await this.gradleExtractor.extractDependenciesWithTimeout(
                 project.path,
-                project.relativePath
+                project.relativePath,
+                60000
               );
               break;
             case ProjectType.COMPOSER:
-              dependencies = await this.composerExtractor.extractDependencies(
+              dependencies = await this.composerExtractor.extractDependenciesWithTimeout(
                 project.path,
-                project.relativePath
+                project.relativePath,
+                60000
               );
               break;
             default:

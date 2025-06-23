@@ -28,47 +28,50 @@ export class ComposerExtractor {
   async extractDependencies(projectPath, projectRelativePath) {
     logger.info(`Composer依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
-
+    // composer.json, composer.lockのパスを関数先頭で宣言
+    const composerJsonPath = path.join(projectPath, 'composer.json');
+    const composerLockPath = path.join(projectPath, 'composer.lock');
+    // projectPathForCsvも関数先頭で宣言
+    const projectPathForCsv = path.join(
+      path.dirname(projectRelativePath),
+      'composer.json'
+    );
     try {
-      // composer.jsonのパス
-      const composerJsonPath = path.join(projectPath, 'composer.json');
-      
       if (!existsSync(composerJsonPath)) {
         logger.warn('composer.jsonが見つかりません');
         return [];
       }
-      // composer.lockのパス
-      const composerLockPath = path.join(projectPath, 'composer.lock');
       // composer show --format=json をstreamで実行
+      let stdout = '';
+      let stderr = '';
       await new Promise((resolve, reject) => {
         const proc = spawn('composer', ['show', '--format=json'], { cwd: projectPath, shell: true });
         proc.stdout.on('data', (data) => {
           logger.info(`composer標準出力: ${data.toString()}`);
+          stdout += data.toString();
         });
         proc.stderr.on('data', (data) => {
           logger.warn(`composer標準エラー: ${data.toString()}`);
+          stderr += data.toString();
         });
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
           } else {
-            reject(new Error(`composerコマンドが異常終了しました (exit code: ${code})`));
+            // close時はrejectせず、catchでstderrを参照できるようにする
+            const err = new Error(`composerコマンドが異常終了しました (exit code: ${code})`);
+            err.stderr = stderr;
+            reject(err);
           }
         });
         proc.on('error', (err) => {
+          err.stderr = stderr;
           reject(err);
         });
       });
-      
-      // プロジェクトパスをCSV用に整形
-      const projectPathForCsv = path.join(
-        path.dirname(projectRelativePath), 
-        'composer.json'
-      );
-      
       // JSON出力をパース
       const showData = JSON.parse(stdout);
-        if (showData.installed && Array.isArray(showData.installed)) {
+      if (showData.installed && Array.isArray(showData.installed)) {
         for (const pkg of showData.installed) {
           dependencies.push({
             projectType: 'COMPOSER',
@@ -78,13 +81,15 @@ export class ComposerExtractor {
             isDev: false
           });
         }
-        
         logger.info(`composer showから${dependencies.length}の依存関係を抽出しました`);
         return dependencies;
       }
       
     } catch (execError) {
       logger.error(`composer showコマンド実行エラー: ${execError.message}`);
+      if (execError.stderr) {
+        logger.error(`composer showコマンド標準エラー出力: ${execError.stderr}`);
+      }
       logger.warn('composer.jsonおよびcomposer.lockから依存関係を抽出します');
     }
       // composer.lockからの抽出を試みる
@@ -157,6 +162,19 @@ export class ComposerExtractor {
   } catch (error) {
     logger.error(`Composer依存関係抽出エラー: ${error.message}`);
     return [];
+  }
+  /**
+   * Composer プロジェクトから依存関係を抽出する（タイムアウト付き）
+   * @param {string} projectPath
+   * @param {string} projectRelativePath
+   * @param {number} timeoutMs タイムアウト（ミリ秒）デフォルト60000ms
+   * @returns {Promise<Array<Object>>}
+   */
+  async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
+    return Promise.race([
+      this.extractDependencies(projectPath, projectRelativePath),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('ComposerExtractor: タイムアウト（60秒）')), timeoutMs))
+    ]);
   }
 }
 

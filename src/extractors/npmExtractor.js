@@ -30,30 +30,42 @@ export class NpmExtractor {
     try {
       // package.jsonのパス
       const packageJsonPath = path.join(projectPath, 'package.json');
+      const lockFilePath = path.join(projectPath, 'package-lock.json');
       if (!existsSync(packageJsonPath)) {
         logger.warn('package.jsonが見つかりません');
         return [];
       }
       // npm ls --all --json をstreamで実行
+      let stdout = '';
+      let stderr = '';
       await new Promise((resolve, reject) => {
         const proc = spawn('npm', ['ls', '--all', '--json'], { cwd: projectPath, shell: true });
         proc.stdout.on('data', (data) => {
           logger.info(`npm標準出力: ${data.toString()}`);
+          stdout += data.toString();
         });
         proc.stderr.on('data', (data) => {
           logger.warn(`npm標準エラー: ${data.toString()}`);
+          stderr += data.toString();
         });
         proc.on('close', (code) => {
           if (code === 0) {
             resolve();
           } else {
-            reject(new Error(`npmコマンドが異常終了しました (exit code: ${code})`));
+            const err = new Error(`npmコマンドが異常終了しました (exit code: ${code})`);
+            err.stderr = stderr;
+            err.stdout = stdout;
+            reject(err);
           }
         });
         proc.on('error', (err) => {
+          err.stderr = stderr;
+          err.stdout = stdout;
           reject(err);
         });
       });
+      // npm lsの出力をパースして依存関係を抽出（必要に応じて拡張可）
+      // ...既存のpackage-lock.json/package.json抽出処理...
       // package.jsonを読み込み
       const packageContent = await readFile(packageJsonPath, 'utf8');
       const packageData = JSON.parse(packageContent);
@@ -97,30 +109,31 @@ export class NpmExtractor {
           path.dirname(projectRelativePath), 
           'package.json'
         );
-          for (const [name, version] of Object.entries(packageData.dependencies)) {
+        for (const [name, version] of Object.entries(packageData.dependencies)) {
+          // missing: true の依存はスキップ
+          if (typeof version === 'object' && version.missing === true) continue;
           dependencies.push({
             projectType: 'NPM',
             projectPath: projectPathForCsv,
             dependencyName: name,
-            dependencyVersion: version,
+            dependencyVersion: typeof version === 'string' ? version : version.required || 'unknown',
             isDev: false
           });
         }
       }
-      
       // devDependenciesも取得
       if (packageData.devDependencies) {
         const projectPathForCsv = path.join(
           path.dirname(projectRelativePath), 
           'package.json'
         );
-        
         for (const [name, version] of Object.entries(packageData.devDependencies)) {
+          if (typeof version === 'object' && version.missing === true) continue;
           dependencies.push({
             projectType: 'NPM',
             projectPath: projectPathForCsv,
             dependencyName: name,
-            dependencyVersion: version,
+            dependencyVersion: typeof version === 'string' ? version : version.required || 'unknown',
             isDev: true
           });
         }
@@ -130,8 +143,76 @@ export class NpmExtractor {
       return dependencies;
     } catch (error) {
       logger.error(`NPM依存関係抽出エラー: ${error.message}`);
+      if (error.stderr) {
+        logger.error(`npmコマンド標準エラー出力: ${error.stderr}`);
+      }
+      // exit code 1でもstdoutに有効なJSONがあれば依存関係抽出を試みる
+      if (error.stdout) {
+        try {
+          const npmLsData = JSON.parse(error.stdout);
+          if (npmLsData.problems || npmLsData.error) {
+            logger.warn(`npm ls出力にproblems/error: ${JSON.stringify(npmLsData.problems || npmLsData.error)}`);
+          }
+          // 依存関係抽出ロジック（packageData, lockFilePath, dependencies, ...）
+          const dependencies = [];
+          // package.jsonからの抽出
+          const packageJsonPath = path.join(projectPath, 'package.json');
+          const packageContent = await readFile(packageJsonPath, 'utf8');
+          const packageData = JSON.parse(packageContent);
+          if (packageData.dependencies) {
+            const projectPathForCsv = path.join(
+              path.dirname(projectRelativePath),
+              'package.json'
+            );
+            for (const [name, version] of Object.entries(packageData.dependencies)) {
+              if (typeof version === 'object' && version.missing === true) continue;
+              dependencies.push({
+                projectType: 'NPM',
+                projectPath: projectPathForCsv,
+                dependencyName: name,
+                dependencyVersion: typeof version === 'string' ? version : version.required || 'unknown',
+                isDev: false
+              });
+            }
+          }
+          if (packageData.devDependencies) {
+            const projectPathForCsv = path.join(
+              path.dirname(projectRelativePath),
+              'package.json'
+            );
+            for (const [name, version] of Object.entries(packageData.devDependencies)) {
+              if (typeof version === 'object' && version.missing === true) continue;
+              dependencies.push({
+                projectType: 'NPM',
+                projectPath: projectPathForCsv,
+                dependencyName: name,
+                dependencyVersion: typeof version === 'string' ? version : version.required || 'unknown',
+                isDev: true
+              });
+            }
+          }
+          logger.info(`package.jsonから${dependencies.length}の依存関係を抽出しました`);
+          return dependencies;
+        } catch (jsonErr) {
+          logger.error(`npm ls出力のJSONパース失敗: ${jsonErr.message}`);
+        }
+      }
       return [];
     }
+  }
+
+  /**
+   * NPM プロジェクトから依存関係を抽出する（タイムアウト付き）
+   * @param {string} projectPath
+   * @param {string} projectRelativePath
+   * @param {number} timeoutMs タイムアウト（ミリ秒）デフォルト60000ms
+   * @returns {Promise<Array<Object>>}
+   */
+  async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
+    return Promise.race([
+      this.extractDependencies(projectPath, projectRelativePath),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('NpmExtractor: タイムアウト（60秒）')), timeoutMs))
+    ]);
   }
 
   /**
