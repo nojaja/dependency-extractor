@@ -22,9 +22,10 @@ export class NpmExtractor {
    * package.jsonから依存関係を抽出する
    * @param {string} projectPath - package.jsonが存在するディレクトリパス
    * @param {string} projectRelativePath - リポジトリルートからの相対パス
+   * @param {Object} [options] - procRefでプロセス参照を受け取る
    * @returns {Promise<Array<Object>>} - 抽出された依存関係のリスト
    */
-  async extractDependencies(projectPath, projectRelativePath) {
+  async extractDependencies(projectPath, projectRelativePath, options = {}) {
     logger.info(`NPM依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
     try {
@@ -40,6 +41,7 @@ export class NpmExtractor {
       let stderr = '';
       await new Promise((resolve, reject) => {
         const proc = spawn('npm', ['ls', '--all', '--json'], { cwd: projectPath, shell: true });
+        if (options.procRef) options.procRef.proc = proc;
         proc.stdout.on('data', (data) => {
           logger.info(`npm標準出力: ${data.toString()}`);
           stdout += data.toString();
@@ -209,10 +211,31 @@ export class NpmExtractor {
    * @returns {Promise<Array<Object>>}
    */
   async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
-    return Promise.race([
-      this.extractDependencies(projectPath, projectRelativePath),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('NpmExtractor: タイムアウト（60秒）')), timeoutMs))
-    ]);
+    const procRef = { proc: null };
+    let timeoutId;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      timeoutId = setTimeout(() => {
+        finished = true;
+        if (procRef.proc) {
+          procRef.proc.kill('SIGKILL');
+        }
+        reject(new Error('NpmExtractor: タイムアウト(60秒)'));
+      }, timeoutMs);
+      this.extractDependencies(projectPath, projectRelativePath, { procRef })
+        .then((result) => {
+          if (!finished) {
+            clearTimeout(timeoutId);
+            resolve(result);
+          }
+        })
+        .catch((err) => {
+          if (!finished) {
+            clearTimeout(timeoutId);
+            reject(err);
+          }
+        });
+    });
   }
 
   /**

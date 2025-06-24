@@ -23,9 +23,10 @@ export class GradleExtractor {
    * Gradle プロジェクトから依存関係を抽出する
    * @param {string} projectPath - build.gradleが存在するディレクトリパス
    * @param {string} projectRelativePath - リポジトリルートからの相対パス
+   * @param {Object} [options] - procRefでプロセス参照を受け取る
    * @returns {Promise<Array<Object>>} - 抽出された依存関係のリスト
    */
-  async extractDependencies(projectPath, projectRelativePath) {
+  async extractDependencies(projectPath, projectRelativePath, options = {}) {
     logger.info(`Gradle依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
     let stdout = '';
@@ -34,6 +35,7 @@ export class GradleExtractor {
       // gradle dependencies コマンドをstreamで実行
       await new Promise((resolve, reject) => {
         const proc = spawn('gradle', ['dependencies', '--console=plain'], { cwd: projectPath, shell: true });
+        if (options.procRef) options.procRef.proc = proc;
         proc.stdout.on('data', (data) => {
           const text = data.toString();
           stdout += text;
@@ -104,10 +106,31 @@ export class GradleExtractor {
    * @returns {Promise<Array<Object>>}
    */
   async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
-    return Promise.race([
-      this.extractDependencies(projectPath, projectRelativePath),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('GradleExtractor: タイムアウト（60秒）')), timeoutMs))
-    ]);
+    const procRef = { proc: null };
+    let timeoutId;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      timeoutId = setTimeout(() => {
+        finished = true;
+        if (procRef.proc) {
+          procRef.proc.kill('SIGKILL');
+        }
+        reject(new Error('GradleExtractor: タイムアウト(60秒)'));
+      }, timeoutMs);
+      this.extractDependencies(projectPath, projectRelativePath, { procRef })
+        .then((result) => {
+          if (!finished) {
+            clearTimeout(timeoutId);
+            resolve(result);
+          }
+        })
+        .catch((err) => {
+          if (!finished) {
+            clearTimeout(timeoutId);
+            reject(err);
+          }
+        });
+    });
   }
 
   /**

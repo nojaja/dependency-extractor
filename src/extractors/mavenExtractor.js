@@ -30,9 +30,10 @@ export class MavenExtractor {
    * Maven プロジェクトから依存関係を抽出する
    * @param {string} projectPath - pom.xmlが存在するディレクトリパス
    * @param {string} projectRelativePath - リポジトリルートからの相対パス
+   * @param {Object} [options] - procRefでプロセス参照を受け取る
    * @returns {Promise<Array<Object>>} - 抽出された依存関係のリスト
    */
-  async extractDependencies(projectPath, projectRelativePath) {
+  async extractDependencies(projectPath, projectRelativePath, options = {}) {
     logger.info(`Maven依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
 
@@ -54,6 +55,7 @@ export class MavenExtractor {
           const { spawn } = await import('child_process');
           let stderr = '';
           const mvnProc = spawn('mvn', ['help:effective-pom', `-Doutput=${effectivePomPath}`], { cwd: projectPath, shell: true });
+          if (options.procRef) options.procRef.proc = mvnProc;
 
           await new Promise((resolve, reject) => {
             mvnProc.stdout.on('data', (data) => {
@@ -163,10 +165,31 @@ export class MavenExtractor {
    * @returns {Promise<Array<Object>>}
    */
   async extractDependenciesWithTimeout(projectPath, projectRelativePath, timeoutMs = 60000) {
-    return Promise.race([
-      this.extractDependencies(projectPath, projectRelativePath),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('MavenExtractor: タイムアウト（60秒）')), timeoutMs))
-    ]);
+    const procRef = { proc: null };
+    let timeoutId;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      timeoutId = setTimeout(() => {
+        finished = true;
+        if (procRef.proc) {
+          procRef.proc.kill('SIGKILL');
+        }
+        reject(new Error('MavenExtractor: タイムアウト(60秒)'));
+      }, timeoutMs);
+      this.extractDependencies(projectPath, projectRelativePath, { procRef })
+        .then((result) => {
+          if (!finished) {
+            clearTimeout(timeoutId);
+            resolve(result);
+          }
+        })
+        .catch((err) => {
+          if (!finished) {
+            clearTimeout(timeoutId);
+            reject(err);
+          }
+        });
+    });
   }
 }
 
