@@ -15,7 +15,8 @@ export class CsvHelper {
    * @param {boolean} debug - デバッグモードフラグ
    */
   constructor(outputPath, debug = false) {
-    this.outputPath = outputPath;
+    const outputDir = path.dirname(outputPath);
+    this.outputPath = path.join(outputDir, 'dependencies.csv');
     this.debug = debug;
     this.initialized = false;
     

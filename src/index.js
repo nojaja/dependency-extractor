@@ -1,5 +1,3 @@
-import path from 'path';
-import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import { Command } from 'commander';
 import log4js from 'log4js';
@@ -160,7 +158,7 @@ async function main() {
     const endTimeArray = process.hrtime(startTime);
     const memoryUsage = process.memoryUsage();
     function toMByte(byte) {
-      return `${Math.floor((byte / 1024 / 1024) * 100) / 100}MB`
+      return `${Math.floor((byte / 1024 / 1024) * 100) / 100}MB`;
     }
     const _memoryUsage = JSON.stringify({
       "rss": toMByte(memoryUsage.rss),
@@ -183,15 +181,16 @@ async function main() {
       .parse(process.argv);
 
     const options = program.opts();
-    const repoPath = options.input;
+    const inputPath = options.input;
+    const outputPath = options.output;
 
     // アプリケーションの実行
     const app = new DependencyExtractorApp({
       debug: options.debug,
-      outputPath: options.output
+      outputPath: outputPath
     });
 
-    await app.run(repoPath);
+    await app.run(inputPath);
   } catch (error) {
     logger.error(`エラーが発生しました: ${error.message}`);
     process.exit(1);

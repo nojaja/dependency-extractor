@@ -1,6 +1,4 @@
 import * as path from 'path';
-import * as fs from 'fs/promises';
-import { existsSync } from 'fs';
 import log4js from 'log4js';
 import { DirWalker } from '../utils/dirWalker.js';
 
