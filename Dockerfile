@@ -15,7 +15,7 @@ FROM composer:2 AS php_builder
 FROM node:18-alpine
 
 # 必要なツールをインストール
-RUN apk add --no-cache openjdk11 php git 
+RUN apk add --no-cache openjdk11 php php-phar php-iconv php-mbstring php-openssl php83-curl php83-dom php83-xml git 
 
 # Javaツール（Maven, Gradle）のコピー
 COPY --from=java_builder /usr/share/maven /usr/share/maven

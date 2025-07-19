@@ -1,12 +1,10 @@
 import { readFile } from 'fs/promises';
 import { existsSync, unlinkSync } from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { execa } from 'execa';
 import { XMLParser } from 'fast-xml-parser';
 import log4js from 'log4js';
 
-const execPromise = promisify(exec);
 const logger = log4js.getLogger('mavenExtractor');
 
 /**
@@ -39,58 +37,67 @@ export class MavenExtractor {
     try {
       // pom.xmlのパス
       const pomPath = path.join(projectPath, 'pom.xml');
-      
+      // pom.xml存在確認
+      if (!existsSync(pomPath)) {
+        logger.warn('pom.xmlが見つかりません');
+        return [];
+      }
+      // mvn installを実行
+      try {
+        logger.info('mvn installを実行して依存関係をインストールします');
+        const { stdout, stderr, exitCode } = await execa('mvn', ['install', '-DskipTests'], {
+          cwd: projectPath,
+          shell: true,
+          timeout: 60000 // 60秒
+        });
+        if (stderr) logger.warn(`mvn install 標準エラー: ${stderr}`);
+        if (this.debug && stdout) logger.debug(`mvn install 標準出力: ${stdout}`);
+        if (exitCode !== 0) logger.warn(`mvn installが異常終了しました (exit code: ${exitCode})`);
+      } catch (installError) {
+        logger.error(`mvn install実行エラー: ${installError.message}`);
+        // インストール失敗時も続行
+      }
       // effective-pomを生成するためのパス
       const effectivePomPath = path.join(projectPath, 'effective-pom.xml');
-      
       try {        // まず通常のpom.xmlから基本情報を読み取る
         const pomContent = await readFile(pomPath, 'utf8');
         const pomData = this.xmlParser.parse(pomContent);
-        
         // mvn help:effective-pomコマンドを実行
         logger.info(`effective-pomを生成中: ${projectPath}`);
         try {
-          // streamで標準出力・標準エラーをloggerに出力
-          const { spawn } = await import('child_process');
-          const mvnProc = spawn('mvn', ['help:effective-pom', `-Doutput=${effectivePomPath}`], { cwd: projectPath, shell: true });
-
-          await new Promise((resolve, reject) => {
-            mvnProc.stdout.on('data', (data) => {
-              logger.info(`mvn標準出力: ${data.toString()}`);
-            });
-            mvnProc.stderr.on('data', (data) => {
-              logger.warn(`mvn標準エラー: ${data.toString()}`);
-            });
-            mvnProc.on('close', (code) => {
-              if (code === 0) {
-                resolve();
-              } else {
-                reject(new Error(`mvnコマンドが異常終了しました (exit code: ${code})`));
-              }
-            });
-            mvnProc.on('error', (err) => {
-              reject(err);
-            });
+          // execaでmvnコマンドを実行
+          const { stdout, stderr, exitCode } = await execa('mvn', ['help:effective-pom', `-Doutput=${effectivePomPath}`], {
+            cwd: projectPath,
+            shell: true,
+            timeout: 60000 // 60秒に延長
           });
-          
-          if (this.debug) logger.debug(`effective-pom生成成功: ${effectivePomPath}`);
-            // effective-pomを読み込む
+          if (stderr) logger.warn(`mvn標準エラー: ${stderr}`);
+          if (this.debug && stdout) logger.info(`mvn標準出力: ${stdout}`);
+          if (exitCode !== 0) throw new Error(`mvnコマンドが異常終了しました (exit code: ${exitCode})`);
+        } catch (execError) {
+          if (execError.timedOut) {
+            logger.warn(`mvnコマンドがタイムアウトしました: ${execError.message}`);
+          } else {
+            logger.error(`mvnコマンド実行エラー: ${execError.message}`);
+          }
+          // タイムアウト・その他エラー時もフォールバック処理を継続
+        }
+        // effective-pomを読み込む前に存在確認
+        if (existsSync(effectivePomPath)) {
+          if (this.debug) logger.info(`effective-pom生成成功: ${effectivePomPath}`);
           const effectivePomContent = await readFile(effectivePomPath, 'utf8');
           const effectivePomData = this.xmlParser.parse(effectivePomContent);
-          
           // プロジェクトデータ取得
           const projectData = effectivePomData.project;
-          
           if (projectData && projectData.dependencies && projectData.dependencies.dependency) {
             const projectPathForCsv = path.join(
               path.dirname(projectRelativePath), 
               'pom.xml'
             );
-              // 依存関係リストを取得
+            // 依存関係リストを取得
             const deps = Array.isArray(projectData.dependencies.dependency) 
               ? projectData.dependencies.dependency 
               : [projectData.dependencies.dependency];
-            
             for (const dep of deps) {
               dependencies.push({
                 projectType: 'MAVEN',
@@ -101,28 +108,24 @@ export class MavenExtractor {
               });
             }
           }
-              // 一時ファイルを削除
-          try {
-            unlinkSync(effectivePomPath);
-          } catch (error) {
-            logger.warn(`effective-pomファイル削除エラー: ${error.message}`);
-          }
-          
-        } catch (execError) {
-          logger.error(`mvnコマンド実行エラー: ${execError.message}`);
-          logger.warn('Maven実行エラー。基本的なpom.xmlのみから依存関係を抽出します');
-          
+          // 一時ファイルを削除
+          // try {
+          //   unlinkSync(effectivePomPath);
+          // } catch (error) {
+          //   logger.warn(`effective-pomファイル削除エラー: ${error.message}`);
+          // }
+        } else {
+          logger.warn(`effective-pom.xmlが生成されませんでした。pom.xmlのみから抽出します`);
           // effective-pom生成に失敗した場合は、通常のpom.xmlから依存関係を抽出
           if (pomData.project && pomData.project.dependencies && pomData.project.dependencies.dependency) {
             const projectPathForCsv = path.join(
               path.dirname(projectRelativePath), 
               'pom.xml'
             );
-            
             const deps = Array.isArray(pomData.project.dependencies.dependency) 
               ? pomData.project.dependencies.dependency 
               : [pomData.project.dependencies.dependency];
-              for (const dep of deps) {
+            for (const dep of deps) {
               dependencies.push({
                 projectType: 'MAVEN',
                 projectPath: projectPathForCsv,

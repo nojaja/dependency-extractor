@@ -1,8 +1,6 @@
-import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
-import { promisify } from 'util';
+import { execa } from 'execa';
 import log4js from 'log4js';
 
 const logger = log4js.getLogger('gradleExtractor');
@@ -29,27 +27,6 @@ export class GradleExtractor {
     logger.info(`Gradle依存関係を抽出中: ${projectPath}`);
     const dependencies = [];
     try {
-      // gradle dependencies コマンドをstreamで実行
-      await new Promise((resolve, reject) => {
-        const proc = spawn('gradle', ['dependencies', '--console=plain'], { cwd: projectPath, shell: true });
-        proc.stdout.on('data', (data) => {
-          logger.info(`gradle標準出力: ${data.toString()}`);
-        });
-        proc.stderr.on('data', (data) => {
-          logger.warn(`gradle標準エラー: ${data.toString()}`);
-        });
-        proc.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`gradleコマンドが異常終了しました (exit code: ${code})`));
-          }
-        });
-        proc.on('error', (err) => {
-          reject(err);
-        });
-      });
-      
       // build.gradle または build.gradle.kts のパスを確認
       let gradleFile = 'build.gradle';
       if (!existsSync(path.join(projectPath, gradleFile))) {
@@ -59,29 +36,77 @@ export class GradleExtractor {
           return [];
         }
       }
-      
+      // gradle buildを実行
+      try {
+        logger.info('gradle buildを実行して依存関係をインストールします');
+        const { stdout, stderr, exitCode } = await execa('gradle', ['build', '--console=plain'], {
+          cwd: projectPath,
+          shell: true,
+          timeout: 120000 // 120秒
+        });
+        if (stderr) logger.warn(`gradle build 標準エラー: ${stderr}`);
+        if (this.debug && stdout) logger.info(`gradle build 標準出力: ${stdout}`);
+        if (exitCode !== 0) logger.warn(`gradle buildが異常終了しました (exit code: ${exitCode})`);
+      } catch (installError) {
+        if (installError.timedOut) {
+          logger.warn(`gradle buildコマンドがタイムアウトしました: ${installError.message}`);
+        } else {
+          logger.error(`gradle build実行エラー: ${installError.message}`);
+        }
+        
+        // インストール失敗時も続行
+      }
+      // gradle dependencies コマンドをexecaで実行
+      let stdout = '';
+      try {
+        const result = await execa('gradle', ['dependencies', '--console=plain'], {
+          cwd: projectPath,
+          shell: true,
+          timeout: 1200000 // 120秒に延長
+        });
+        if (result.stderr) logger.warn(`gradle標準エラー: ${result.stderr}`);
+        if (typeof result.stdout !== 'undefined') {
+          if (this.debug && stdout) logger.info(`gradle標準出力: ${result.stdout}`);
+          stdout = result.stdout;
+        } else {
+          logger.warn('gradleコマンドの標準出力が取得できませんでした');
+        }
+        if (result.exitCode !== 0) throw new Error(`gradleコマンドが異常終了しました (exit code: ${result.exitCode})`);
+      } catch (execError) {
+        if (execError.timedOut) {
+          logger.warn(`gradleコマンドがタイムアウトしました: ${execError.message}`);
+        } else {
+          logger.error(`gradleコマンド実行エラー: ${execError.message}`);
+        }
+        // タイムアウト・その他エラー時もstdoutを空文字列に
+        stdout = '';
+      }
       // プロジェクトパスをCSV用に整形
       const projectPathForCsv = path.join(
         path.dirname(projectRelativePath), 
         gradleFile
       );
-      
       // 出力を解析して依存関係を抽出
-      const depLines = this._parseGradleDependenciesOutput(stdout);
-        for (const dep of depLines) {
+      let depLines = this._parseGradleDependenciesOutput(stdout);
+      if (!Array.isArray(depLines)) depLines = [];
+      for (const dep of depLines) {
+        if (!dep) continue;
+        const group = dep.group || 'unknown';
+        const name = dep.name || 'unknown';
+        const version = dep.version || 'unknown';
         dependencies.push({
           projectType: 'GRADLE',
           projectPath: projectPathForCsv,
-          dependencyName: `${dep.group}:${dep.name}`,
-          dependencyVersion: dep.version || 'unknown',
-          isDev: dep.configuration === 'testCompileClasspath' || dep.configuration === 'testImplementation'
+          dependencyName: `${group}:${name}`,
+          dependencyVersion: version,
+          isDev: !!dep.configuration && (dep.configuration === 'testCompileClasspath' || dep.configuration === 'testImplementation')
         });
       }
-      
     } catch (error) {
       logger.error(`Gradle依存関係抽出エラー: ${error.message}`);
       return [];
     }
+    return dependencies;
   }
 
   /**

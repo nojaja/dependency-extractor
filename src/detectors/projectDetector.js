@@ -74,7 +74,17 @@ export class ProjectDetector {
     };
 
     // 再帰的にリポジトリを走査
-    const processedFiles = await this.dirWalker.walk(repoPath, {}, fileCallback, errorCallback);
+    const processedFiles = await this.dirWalker.walk(repoPath, {
+      excludeDirs:[
+        /\/\.mvn$/,
+        /\/\.git$/,
+        /\/\.svn$/,
+        /\/vendor$/,
+        /\/node_modules$/,
+        /\/dist$/
+      ],
+      excludeExt:[]
+    }, fileCallback, errorCallback);
     
     logger.info(`処理完了: ${processedFiles} ファイルをスキャン、${projects.length} プロジェクトを検出`);
     return projects;
@@ -129,7 +139,17 @@ export class ProjectDetector {
     };
 
     // 再帰的にリポジトリを走査
-    const processedFiles = await this.dirWalker.walk(repoPath, {}, fileCallback, errorCallback);
+    const processedFiles = await this.dirWalker.walk(repoPath, {
+      excludeDirs:[
+        /\/\.mvn$/,
+        /\/\.git$/,
+        /\/\.svn$/,
+        /\/vendor$/,
+        /\/node_modules$/,
+        /\/dist$/
+      ],
+      excludeExt:[]
+    }, fileCallback, errorCallback);
     
     logger.info(`ストリーミング処理完了: ${processedFiles} ファイルをスキャン、${projectCount} プロジェクトを処理`);
     return projectCount;

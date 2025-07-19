@@ -99,12 +99,15 @@ class DependencyExtractorApp {
               return;
           }
 
+          // dependenciesがundefinedの場合は空配列に補正
+          if (!Array.isArray(dependencies)) dependencies = [];
           if (dependencies.length > 0) {
             // 即座にCSVに書き込み、メモリから解放
             await this.csvHelper.appendDependenciesToCsv(dependencies);
             totalDependencies += dependencies.length;
             logger.info(`${project.type} プロジェクト '${project.relativePath}' から ${dependencies.length} 個の依存関係を処理しました。`);
-          } else {
+          } else if (!dependencies._skip) {
+            // vendorスキップ時はWARNを出さない
             logger.warn(`${project.type} プロジェクト '${project.relativePath}' から依存関係を抽出できませんでした。`);
           }
           

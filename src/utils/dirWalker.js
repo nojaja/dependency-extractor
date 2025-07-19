@@ -1,7 +1,8 @@
 import * as fs from 'fs/promises';
-import { existsSync, statSync } from 'fs';
 import * as path from 'path';
 import log4js from 'log4js';
+import MatchAll from './MatchAll.js';
+
 
 // ロガーの設定
 log4js.configure({
@@ -14,6 +15,7 @@ log4js.configure({
 });
 
 const logger = log4js.getLogger('dirWalker');
+const matchAll = new MatchAll();
 
 /**
  * ディレクトリを再帰的に走査するユーティリティクラス
@@ -36,7 +38,7 @@ export class DirWalker {
    * @param {Function} errCallback - エラー発生時のコールバック関数 (error) => {}
    * @returns {Promise<number>} - 処理したファイル数
    */
-  async walk(targetPath, settings = {}, fileCallback, errCallback) {
+  async walk(targetPath, settings = {excludeDirs:[],excludeExt:[]}, fileCallback, errCallback) {
     this.counter = 0;
     const _settings = { ...settings };
     
@@ -69,9 +71,11 @@ export class DirWalker {
           }
           
           if (stat.isDirectory()) {
+            if (matchAll.match(filePath, settings.excludeDirs)) continue; // 除外ディレクトリにマッチする場合はスキップ
             // ディレクトリの場合は再帰的に処理
             await this._walk(filePath, basePath, settings, fileCallback, errCallback);
           } else {
+            if (matchAll.match(filePath, settings.excludeExt)) continue; // 除外ファイルにマッチする場合はスキップ
             // ファイルの場合はカウンタをインクリメントしてコールバックを実行
             this.counter++;
             if (this.debug) logger.debug(`ファイル発見: ${filePath}`);

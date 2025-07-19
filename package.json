@@ -24,6 +24,7 @@
   "dependencies": {
     "commander": "^11.1.0",
     "csv-stringify": "^6.4.5",
+    "execa": "^9.6.0",
     "fast-xml-parser": "^4.3.3",
     "log4js": "^6.9.1"
   },
